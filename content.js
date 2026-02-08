@@ -1,5 +1,5 @@
 (function () {
-  // Safety: only run on indeed
+  // Run only on Indeed
   if (!location.hostname.endsWith("indeed.com")) return;
 
   // Prevent duplicate UI
@@ -9,15 +9,22 @@
 
   const TARGET_CONTAINERS = [".serp-page-yl2akf", ".css-whzpm2.eu4oa1w0"];
 
-  // Create floating Copy button
-  const copyBtn = document.createElement("button");
-  copyBtn.id = "indeed-copy-ui";
-  copyBtn.textContent = "Copy";
-  Object.assign(copyBtn.style, {
+  // ---------- UI CONTAINER ----------
+  const uiWrapper = document.createElement("div");
+  uiWrapper.id = "indeed-copy-ui";
+  Object.assign(uiWrapper.style, {
     position: "fixed",
     bottom: "20px",
     right: "20px",
     zIndex: "999999",
+    display: "flex",
+    gap: "8px",
+  });
+
+  // ---------- COPY CONTENT BUTTON ----------
+  const copyBtn = document.createElement("button");
+  copyBtn.textContent = "Copy";
+  Object.assign(copyBtn.style, {
     padding: "10px 16px",
     background: "#111",
     color: "#fff",
@@ -27,8 +34,24 @@
     cursor: "pointer",
   });
 
-  document.body.appendChild(copyBtn);
+  // ---------- COPY URL BUTTON ----------
+  const copyUrlBtn = document.createElement("button");
+  copyUrlBtn.textContent = "Copy URL";
+  Object.assign(copyUrlBtn.style, {
+    padding: "10px 16px",
+    background: "#444",
+    color: "#fff",
+    border: "none",
+    borderRadius: "6px",
+    fontSize: "14px",
+    cursor: "pointer",
+  });
 
+  uiWrapper.appendChild(copyBtn);
+  uiWrapper.appendChild(copyUrlBtn);
+  document.body.appendChild(uiWrapper);
+
+  // ---------- HELPERS ----------
   function waitForContent(timeout = 5000) {
     return new Promise((resolve, reject) => {
       const start = Date.now();
@@ -63,22 +86,23 @@
       return el ? el.innerText.trim() : "";
     })
       .filter(Boolean)
-      .join("\n\n"); // clean separation between sections
+      .join("\n\n");
   }
 
+  // ---------- COPY CONTENT LOGIC ----------
   copyBtn.addEventListener("click", async () => {
     const trigger = document.querySelector(TRIGGER_BUTTON);
     copyBtn.textContent = "Loading…";
 
     try {
-      // Click only if button says "show more"
+      // Click only if button includes "show more"
       if (trigger && trigger.innerText.toLowerCase().includes("show more")) {
         trigger.click();
         await waitForContent();
       }
 
       const text = collectText();
-      if (!text) throw new Error("No content found");
+      if (!text) throw new Error("No content");
 
       await navigator.clipboard.writeText(text);
 
@@ -90,10 +114,22 @@
     }
   });
 
-  // Keep button alive across SPA rerenders
+  // ---------- COPY URL LOGIC ----------
+  copyUrlBtn.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(window.location.href);
+      copyUrlBtn.textContent = "URL Copied!";
+      setTimeout(() => (copyUrlBtn.textContent = "Copy URL"), 1500);
+    } catch {
+      copyUrlBtn.textContent = "Failed";
+      setTimeout(() => (copyUrlBtn.textContent = "Copy URL"), 1500);
+    }
+  });
+
+  // ---------- KEEP UI ALIVE (SPA SAFE) ----------
   const keepAlive = new MutationObserver(() => {
     if (!document.getElementById("indeed-copy-ui")) {
-      document.body.appendChild(copyBtn);
+      document.body.appendChild(uiWrapper);
     }
   });
 
