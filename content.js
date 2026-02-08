@@ -1,9 +1,13 @@
 (function () {
+  // Safety: only run on indeed
   if (!location.hostname.endsWith("indeed.com")) return;
+
+  // Prevent duplicate UI
   if (document.getElementById("indeed-copy-ui")) return;
 
   const TRIGGER_BUTTON = ".js-match-insights-provider-1s05l8k.e19afand0";
-  const TARGET_CONTAINER = ".serp-page-yl2akf";
+
+  const TARGET_CONTAINERS = [".serp-page-yl2akf", ".css-whzpm2.eu4oa1w0"];
 
   // Create floating Copy button
   const copyBtn = document.createElement("button");
@@ -30,10 +34,14 @@
       const start = Date.now();
 
       const observer = new MutationObserver(() => {
-        const target = document.querySelector(TARGET_CONTAINER);
-        if (target && target.innerText.trim()) {
+        const hasContent = TARGET_CONTAINERS.some((sel) => {
+          const el = document.querySelector(sel);
+          return el && el.innerText.trim();
+        });
+
+        if (hasContent) {
           observer.disconnect();
-          resolve(target);
+          resolve();
         }
 
         if (Date.now() - start > timeout) {
@@ -49,10 +57,13 @@
     });
   }
 
-  async function copyContent() {
-    const target = document.querySelector(TARGET_CONTAINER);
-    if (!target) throw new Error("No content");
-    await navigator.clipboard.writeText(target.innerText.trim());
+  function collectText() {
+    return TARGET_CONTAINERS.map((selector) => {
+      const el = document.querySelector(selector);
+      return el ? el.innerText.trim() : "";
+    })
+      .filter(Boolean)
+      .join("\n\n"); // clean separation between sections
   }
 
   copyBtn.addEventListener("click", async () => {
@@ -60,14 +71,16 @@
     copyBtn.textContent = "Loading…";
 
     try {
-      // 🔹 If trigger exists AND includes "show more"
+      // Click only if button says "show more"
       if (trigger && trigger.innerText.toLowerCase().includes("show more")) {
         trigger.click();
         await waitForContent();
       }
 
-      // 🔹 Copy content (always)
-      await copyContent();
+      const text = collectText();
+      if (!text) throw new Error("No content found");
+
+      await navigator.clipboard.writeText(text);
 
       copyBtn.textContent = "Copied!";
       setTimeout(() => (copyBtn.textContent = "Copy"), 1500);
@@ -77,7 +90,7 @@
     }
   });
 
-  // Keep button alive on SPA rerenders
+  // Keep button alive across SPA rerenders
   const keepAlive = new MutationObserver(() => {
     if (!document.getElementById("indeed-copy-ui")) {
       document.body.appendChild(copyBtn);
