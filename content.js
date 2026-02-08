@@ -112,6 +112,12 @@
   // ---------- SEND TO API + OPEN TAB ----------
   sendBtn.onclick = async () => {
     sendBtn.textContent = "Sending…";
+    const trigger = document.querySelector(TRIGGER_BUTTON);
+
+    if (trigger && trigger.innerText.toLowerCase().includes("show more")) {
+      trigger.click();
+      await waitForContent();
+    }
 
     const payload = {
       url: location.href,
