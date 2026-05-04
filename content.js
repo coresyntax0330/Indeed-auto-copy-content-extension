@@ -6,8 +6,8 @@
 
   const TARGET_CONTAINERS = [".serp-page-yl2akf", ".css-whzpm2.eu4oa1w0"];
 
-  const API_URL = "http://45.15.160.247:5000/api/bids/get-draft";
-  const BID_PAGE_URL = "http://45.15.160.247:3000/bid";
+  const API_URL = "http://37.221.127.4:5000/api/bids/get-draft";
+  const BID_PAGE_URL = "http://37.221.127.4:3000/bid";
 
   // ---------- UI ----------
   const uiWrapper = document.createElement("div");
