@@ -19,5 +19,5 @@
       "js": ["content.js"]
     }
   ],
-  "host_permissions": ["http://37.221.127.4:5000/*"]
+  "host_permissions": ["http://31.220.80.36:5000/*"]
 }
