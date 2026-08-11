@@ -1,5 +1,7 @@
 (function () {
-  if (!location.hostname.endsWith("indeed.com")) return;
+  const isIndeed = location.hostname.endsWith("indeed.com");
+  const isCvLibrary = location.hostname.includes("cv-library.co");
+  if (!isIndeed && !isCvLibrary) return;
   if (document.getElementById("resume-builder-extension")) return;
 
   const API_BASE = "https://api.lovapextech.com/api";
@@ -11,6 +13,10 @@
   ];
 
   function getTargetContainers() {
+    if (isCvLibrary) {
+      return [".Card_card__ySwWs.JobView_jobCard__j1gZ0"];
+    }
+
     if (location.pathname.startsWith("/jobs")) {
       return [
         ".jobsearch-RightPane.css-6iabie.eu4oa1w0",
@@ -77,7 +83,7 @@
       <button class="mini" data-copy>Copy</button><button class="mini" data-url>Copy URL</button><button class="mini send" data-send>Send</button>
     </div>
     <aside class="panel" aria-label="Resume Builder">
-      <header class="head"><div class="brand">Resume Builder<small>Indeed assistant</small></div><button class="close" aria-label="Close">&times;</button></header>
+      <header class="head"><div class="brand">Resume Builder<small>Job assistant</small></div><button class="close" aria-label="Close">&times;</button></header>
       <main class="body"><div class="card"><div data-view></div></div></main>
     </aside>`;
 
