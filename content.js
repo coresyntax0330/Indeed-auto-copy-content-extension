@@ -6,8 +6,8 @@
 
   const TARGET_CONTAINERS = [".serp-page-yl2akf", ".css-whzpm2.eu4oa1w0"];
 
-  const API_URL = "http://31.220.80.36:5000/api/bids/get-draft";
-  const BID_PAGE_URL = "http://31.220.80.36:3000/bid";
+  const API_URL = "https://api.lovapextech.com/api/bids/get-draft";
+  const BID_PAGE_URL = "https://app.lovapextech.com/bid";
 
   // ---------- UI ----------
   const uiWrapper = document.createElement("div");
