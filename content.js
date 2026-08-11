@@ -6,6 +6,9 @@
     location.hostname.endsWith(".reed.co.uk");
   const isReedCom =
     location.hostname === "reed.com" || location.hostname.endsWith(".reed.com");
+  const isTotalJobs =
+    location.hostname === "totaljobs.com" ||
+    location.hostname.endsWith(".totaljobs.com");
   const ADZUNA_DOMAINS = [
     "adzuna.com.au", "adzuna.at", "adzuna.be", "adzuna.com.br",
     "adzuna.ca", "adzuna.fr", "adzuna.de", "adzuna.in", "adzuna.it",
@@ -17,7 +20,14 @@
     (domain) =>
       location.hostname === domain || location.hostname.endsWith(`.${domain}`),
   );
-  if (!isIndeed && !isCvLibrary && !isAdzuna && !isReed && !isReedCom)
+  if (
+    !isIndeed &&
+    !isCvLibrary &&
+    !isAdzuna &&
+    !isReed &&
+    !isReedCom &&
+    !isTotalJobs
+  )
     return;
   if (document.getElementById("resume-builder-extension")) return;
 
@@ -30,6 +40,10 @@
   ];
 
   function getTargetContainers() {
+    if (isTotalJobs) {
+      return [".job-ad-display-1dikfpt"];
+    }
+
     if (isReedCom) {
       return [".JobBody", '[class~="lg:col-span-2"]'];
     }

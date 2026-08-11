@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Indeed Content Copier",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "description": "Generate tailored Resume Builder drafts from supported job sites",
   "permissions": ["clipboardWrite", "scripting", "storage"],
   "icons": {
@@ -39,7 +39,8 @@
         "https://*.adzuna.co.uk/*",
         "https://*.adzuna.com/*",
         "https://*.reed.co.uk/*",
-        "https://*.reed.com/*"
+        "https://*.reed.com/*",
+        "https://*.totaljobs.com/*"
       ],
       "js": ["content.js"]
     }
