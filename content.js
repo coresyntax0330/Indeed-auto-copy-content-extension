@@ -3,6 +3,7 @@
   if (document.getElementById("resume-builder-extension")) return;
 
   const API_BASE = "https://api.lovapextech.com/api";
+  const SERVICE_BASE = "https://api.lovapextech.com";
   const TRIGGER_BUTTON = ".js-match-insights-provider-1s05l8k.e19afand0";
   const TARGET_CONTAINERS = [
     "#jobDescriptionText",
@@ -37,6 +38,15 @@
       textarea { resize: vertical; min-height: 220px; line-height: 1.4; }
       .primary { width: 100%; padding: 11px 14px; margin-top: 18px; color: white; background: #087b85; }
       .secondary { width: 100%; padding: 10px; margin-top: 10px; color: #31515b; background: #e8f3f5; }
+      .danger { width: auto; flex: 0 0 auto; padding: 8px 10px; margin: 0; color: #9d3030; background: #fff0f0; }
+      .row { display: flex; gap: 8px; align-items: flex-start; margin-bottom: 8px; }
+      .row input, .row textarea { flex: 1; }
+      .row textarea { min-height: 72px; }
+      .two-column { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+      .section { padding-top: 14px; margin-top: 16px; border-top: 1px solid #d8e8ec; }
+      .section-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+      .section-title label { margin: 0; text-transform: capitalize; }
+      .add { padding: 6px 9px; color: #087b85; background: #e8f3f5; font-size: 12px; }
       button:disabled { cursor: wait; opacity: .65; }
       .error, .success { padding: 10px 12px; border-radius: 8px; margin: 0 0 12px; line-height: 1.4; }
       .error { color: #8c2929; background: #fff0f0; border: 1px solid #f0cccc; }
@@ -61,11 +71,17 @@
   let user = null;
   let verificationToken = "";
   let job = { url: location.href, content: "" };
+  let generationInFlight = false;
 
   function collectText() {
-    return TARGET_CONTAINERS.map((selector) => document.querySelector(selector)?.innerText?.trim() || "")
-      .filter((value, index, values) => value && values.indexOf(value) === index)
-      .join("\n\n");
+    // Indeed's fallback containers can wrap the whole search page and also
+    // contain #jobDescriptionText. Sending all matches duplicates the job and
+    // can exceed the API/proxy request limit, which surfaces as ERR_CONNECTION_CLOSED.
+    for (const selector of TARGET_CONTAINERS) {
+      const text = document.querySelector(selector)?.innerText?.trim();
+      if (text) return text.slice(0, 60000);
+    }
+    return "";
   }
 
   function errorMessage(response, fallback) {
@@ -73,12 +89,49 @@
   }
 
   async function api(path, options = {}) {
-    return chrome.runtime.sendMessage({
-      action: "fetchData",
-      url: `${API_BASE}${path}`,
-      method: options.method || "POST",
-      headers: options.auth === false || !token ? {} : { "x-auth-token": token },
-      body: options.body,
+    // Axios uses XMLHttpRequest in the Resume Builder browser app. Use the
+    // same transport here instead of the extension service worker's fetch.
+    return new Promise((resolve) => {
+      const request = new XMLHttpRequest();
+      request.open(options.method || "POST", `${API_BASE}${path}`, true);
+      request.timeout = 5 * 60 * 1000;
+      request.setRequestHeader("Content-Type", "application/json");
+      if (options.auth !== false && token) {
+        request.setRequestHeader("x-auth-token", token);
+      }
+
+      request.onload = () => {
+        let data = {};
+        try {
+          data = request.responseText ? JSON.parse(request.responseText) : {};
+        } catch (_error) {
+          data = {
+            message:
+              request.responseText || "The service returned an invalid response.",
+          };
+        }
+        resolve({
+          success: request.status >= 200 && request.status < 300,
+          status: request.status,
+          data,
+        });
+      };
+      request.onerror = () =>
+        resolve({
+          success: false,
+          status: 0,
+          error: "The Resume Builder API connection was closed.",
+        });
+      request.ontimeout = () =>
+        resolve({
+          success: false,
+          status: 0,
+          error: "Resume generation timed out after 5 minutes.",
+        });
+      request.onabort = () =>
+        resolve({ success: false, status: 0, error: "Request cancelled." });
+
+      request.send(options.body ? JSON.stringify(options.body) : null);
     });
   }
 
@@ -160,11 +213,18 @@
     const div = document.createElement("div"); div.textContent = value || ""; return div.innerHTML;
   }
 
-  function showBuilder() {
-    job.url = location.href;
-    job.content = collectText() || job.content;
-    view.innerHTML = `<div class="user"><span>Signed in as <strong>${escapeHtml(user.name || user.email)}</strong></span><button class="link" data-logout>Sign out</button></div>
-      <h2>Build resume</h2><p>The Indeed job details are ready. Review them, then generate your draft.</p><div data-message></div>
+  function showBuilder(clearJob = false, notice = "") {
+    if (clearJob === true) {
+      job = { url: "", content: "" };
+      generatedDraft = null;
+      generatedBid = null;
+      finalizedPdf = null;
+    } else {
+      job.url = location.href;
+      job.content = collectText() || job.content;
+    }
+    view.innerHTML = `<div class="user"><span><strong>${escapeHtml(user.name || user.email)}</strong><br><small>Balance: ${escapeHtml(String(user.balance ?? 0))}</small></span><button class="link" data-logout>Sign out</button></div>
+      <h2>Build resume</h2><p>${clearJob === true ? "Enter a job URL and description to generate another resume." : "The Indeed job details are ready. Review them, then generate your draft."}</p>${notice ? `<div class="success">${escapeHtml(notice)}</div>` : ""}<div data-message></div>
       <form data-build><label>Job URL</label><input name="url" type="url" required value="${escapeHtml(job.url)}">
       <label>Job description</label><textarea name="content" required>${escapeHtml(job.content)}</textarea>
       <button class="primary" type="submit">Generate resume draft</button></form>`;
@@ -172,7 +232,12 @@
     $("[data-build]").onsubmit = handleGenerate;
   }
 
-  function showGeneratedDraft(rawResult) {
+  let generatedDraft = null;
+  let generatedBid = null;
+  let finalizeInFlight = false;
+  let finalizedPdf = null;
+
+  function normalizeDraft(rawResult) {
     let draft;
     try {
       draft = typeof rawResult === "string" ? JSON.parse(rawResult) : rawResult;
@@ -180,52 +245,271 @@
       draft = null;
     }
 
+    if (!draft || typeof draft !== "object") return null;
+    draft.skills = draft.skills && typeof draft.skills === "object" ? draft.skills : {};
+    draft.experiences = draft.experiences && typeof draft.experiences === "object"
+      ? draft.experiences
+      : {};
+    for (let index = 1; index <= 3; index += 1) {
+      draft.experiences[`role${index}`] ||= "";
+      if (!Array.isArray(draft.experiences[`experience${index}`])) {
+        draft.experiences[`experience${index}`] = [];
+      }
+    }
+    return draft;
+  }
+
+  function editorInput(label, field, value, type = "input") {
+    const control = type === "textarea"
+      ? `<textarea data-field="${field}" rows="4">${escapeHtml(value || "")}</textarea>`
+      : `<input data-field="${field}" value="${escapeHtml(value || "")}">`;
+    return `<label>${label}</label>${control}`;
+  }
+
+  function renderDraftEditor() {
+    const draft = generatedDraft;
+    const skillGroups = Object.entries(draft.skills)
+      .map(([category, skills]) => `<div class="section" data-skill-group="${escapeHtml(category)}">
+        <div class="section-title"><label>${escapeHtml(category.replaceAll("_", " "))}</label><button class="add" type="button" data-add-skill="${escapeHtml(category)}">+ Add skill</button></div>
+        ${(Array.isArray(skills) ? skills : []).map((skill, index) => `<div class="row"><input data-skill-category="${escapeHtml(category)}" data-index="${index}" value="${escapeHtml(skill)}"><button class="danger" type="button" data-remove-skill="${escapeHtml(category)}" data-index="${index}">Remove</button></div>`).join("")}
+      </div>`).join("");
+    const roles = `<div class="section"><h2>Roles</h2>${[1, 2, 3]
+      .map((number) => editorInput(`Role ${number}`, `role${number}`, draft.experiences[`role${number}`]))
+      .join("")}</div>`;
+    const experiences = [1, 2, 3].map((number) => `<div class="section">
+      <div class="section-title"><label>Experience ${number}</label><button class="add" type="button" data-add-experience="${number}">+ Add entry</button></div>
+      ${draft.experiences[`experience${number}`].map((item, index) => `<div class="row"><textarea data-experience="${number}" data-index="${index}">${escapeHtml(item)}</textarea><button class="danger" type="button" data-remove-experience="${number}" data-index="${index}">Remove</button></div>`).join("")}
+    </div>`).join("");
+
+    view.innerHTML = `<div class="user"><span><strong>${escapeHtml(user.name || user.email)}</strong><br><small>Balance: ${escapeHtml(String(user.balance ?? 0))}</small></span><button class="link" data-logout>Sign out</button></div>
+      <div class="success">Your tailored resume draft is ready. Review and edit it below.</div>
+      <h2>Resume Preview &amp; Edit</h2>
+      <div data-finalize-message></div>
+      <button class="primary" type="button" data-finalize>Finalize generate &amp; download</button>
+      ${editorInput("Company", "company_name", draft.company_name)}
+      ${editorInput("Company title", "role_title", draft.role_title)}
+      ${editorInput("Role title", "developer_title", draft.developer_title)}
+      <div class="two-column"><div>${editorInput("Salary range", "salary_range", draft.salary_range)}</div><div>${editorInput("Job type", "job_type", draft.job_type)}</div></div>
+      ${editorInput("Summary", "summary", draft.summary, "textarea")}
+      ${roles}
+      ${experiences}
+      <div class="section"><h2>Skills</h2>${skillGroups || "<p>No skill groups were generated.</p>"}</div>
+      <button class="primary" type="button" data-finalize>Finalize generate &amp; download</button>
+      <button class="primary" type="button" data-copy-draft>Copy edited draft</button>
+      <button class="secondary" type="button" data-another>Generate another draft</button>`;
+
+    view.oninput = (event) => {
+      const target = event.target;
+      if (target.dataset.field) {
+        if (target.dataset.field.startsWith("role") && /^role\d$/.test(target.dataset.field)) {
+          draft.experiences[target.dataset.field] = target.value;
+        } else draft[target.dataset.field] = target.value;
+      } else if (target.dataset.skillCategory) {
+        draft.skills[target.dataset.skillCategory][Number(target.dataset.index)] = target.value;
+      } else if (target.dataset.experience) {
+        draft.experiences[`experience${target.dataset.experience}`][Number(target.dataset.index)] = target.value;
+      }
+    };
+    view.onclick = async (event) => {
+      const target = event.target;
+      if (target.dataset.addSkill) {
+        draft.skills[target.dataset.addSkill].push(""); renderDraftEditor();
+      } else if (target.dataset.removeSkill) {
+        draft.skills[target.dataset.removeSkill].splice(Number(target.dataset.index), 1); renderDraftEditor();
+      } else if (target.dataset.addExperience) {
+        draft.experiences[`experience${target.dataset.addExperience}`].push(""); renderDraftEditor();
+      } else if (target.dataset.removeExperience) {
+        draft.experiences[`experience${target.dataset.removeExperience}`].splice(Number(target.dataset.index), 1); renderDraftEditor();
+      } else if (target.matches("[data-copy-draft]")) {
+        await navigator.clipboard.writeText(JSON.stringify(draft, null, 2));
+        target.textContent = "Copied!";
+        setTimeout(() => (target.textContent = "Copy edited draft"), 1400);
+      } else if (target.matches("[data-finalize]")) {
+        await finalizeResume(target);
+      } else if (target.matches("[data-another]")) showBuilder();
+      else if (target.matches("[data-logout]")) logout();
+    };
+  }
+
+  function showGeneratedDraft(rawResult, bid = generatedBid) {
+    const draft = normalizeDraft(rawResult);
+
     if (!draft || typeof draft !== "object") {
       view.innerHTML = `<div class="success">Your tailored resume draft was generated successfully.</div>
         <h2>Generated draft</h2><textarea readonly>${escapeHtml(String(rawResult || ""))}</textarea>
         <button class="secondary" data-another>Generate another draft</button>`;
+      $("[data-another]").onclick = () => showBuilder();
     } else {
-      const skillGroups = Object.entries(draft.skills || {})
-        .map(([name, skills]) => `<div><strong>${escapeHtml(name.replaceAll("_", " "))}:</strong> ${escapeHtml(Array.isArray(skills) ? skills.join(", ") : String(skills || ""))}</div>`)
-        .join("");
-      const experienceGroups = [1, 2, 3]
-        .map((index) => {
-          const role = draft.experiences?.[`role${index}`] || "";
-          const items = draft.experiences?.[`experience${index}`] || [];
-          if (!role && !items.length) return "";
-          return `<section><label>${escapeHtml(role || `Experience ${index}`)}</label>${items.map((item) => `<p>${escapeHtml(item)}</p>`).join("")}</section>`;
-        })
-        .join("");
-      view.innerHTML = `<div class="success">Your tailored resume draft is ready.</div>
-        <h2>${escapeHtml(draft.developer_title || "Generated resume")}</h2>
-        <p><strong>${escapeHtml(draft.company_name || "")}</strong>${draft.role_title ? ` &middot; ${escapeHtml(draft.role_title)}` : ""}</p>
-        ${draft.summary ? `<label>Summary</label><p>${escapeHtml(draft.summary)}</p>` : ""}
-        ${skillGroups ? `<label>Skills</label><div>${skillGroups}</div>` : ""}
-        ${experienceGroups}
-        <button class="secondary" data-another>Generate another draft</button>`;
+      generatedDraft = draft;
+      generatedBid = bid;
+      finalizedPdf = null;
+      renderDraftEditor();
     }
-    $("[data-another]").onclick = showBuilder;
+  }
+
+  function downloadPdf(relativePath, filename) {
+    return new Promise((resolve, reject) => {
+      const request = new XMLHttpRequest();
+      request.open("GET", `${SERVICE_BASE}/job/description/${relativePath}`, true);
+      request.responseType = "blob";
+      request.timeout = 2 * 60 * 1000;
+      request.onload = () => {
+        if (request.status < 200 || request.status >= 300) {
+          reject(new Error("The generated PDF could not be downloaded."));
+          return;
+        }
+        const objectUrl = URL.createObjectURL(request.response);
+        const link = document.createElement("a");
+        link.href = objectUrl;
+        link.download = filename || "resume.pdf";
+        link.style.display = "none";
+        shadow.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+        resolve();
+      };
+      request.onerror = () => reject(new Error("The PDF download connection failed."));
+      request.ontimeout = () => reject(new Error("The PDF download timed out."));
+      request.send();
+    });
+  }
+
+  async function finalizeResume(button) {
+    if (finalizeInFlight) return;
+    const message = $("[data-finalize-message]");
+    if (finalizedPdf) {
+      try {
+        button.disabled = true;
+        button.textContent = "Downloading PDF...";
+        await downloadPdf(finalizedPdf.path, finalizedPdf.filename);
+        message.innerHTML = `<div class="success">Your PDF download has started.</div>`;
+        button.textContent = "Download PDF again";
+      } catch (error) {
+        message.innerHTML = `<div class="error">${escapeHtml(error.message)}</div>`;
+        button.textContent = "Try PDF download again";
+      } finally {
+        button.disabled = false;
+      }
+      return;
+    }
+    if (!generatedBid?._id) {
+      message.innerHTML = `<div class="error">The generated job record is missing. Please generate the draft again.</div>`;
+      return;
+    }
+
+    finalizeInFlight = true;
+    button.disabled = true;
+    button.textContent = "Finalizing resume...";
+    message.innerHTML = `<p class="hint">Creating your document and PDF. This may take a moment.</p>`;
+    const response = await api("/bids/gen-resume", {
+      body: {
+        company_name: String(generatedDraft.company_name || "").replace(/\.$/, ""),
+        developer_title: generatedDraft.developer_title || "",
+        role_title: generatedDraft.role_title || "",
+        salary_range: generatedDraft.salary_range || "",
+        job_type: generatedDraft.job_type || "",
+        summary: generatedDraft.summary || "",
+        skills: generatedDraft.skills,
+        experiences: generatedDraft.experiences,
+        bid: generatedBid,
+        user,
+      },
+    });
+
+    if (!response.success || response.data?.status !== "success") {
+      message.innerHTML = `<div class="error">${escapeHtml(errorMessage(response, "Unable to finalize the resume."))}</div>`;
+      button.disabled = false;
+      button.textContent = "Finalize generate & download";
+      finalizeInFlight = false;
+      return;
+    }
+
+    finalizedPdf = {
+      path: response.data.downloadPDFLink,
+      filename: response.data.pdf_filename,
+    };
+    try {
+      await downloadPdf(finalizedPdf.path, finalizedPdf.filename);
+      message.innerHTML = `<div class="success">Resume generated successfully. Your PDF download has started.</div>`;
+      user.balance = response.data.balance ?? user.balance;
+      showBuilder(true, "Resume generated successfully. Your PDF download has started.");
+    } catch (error) {
+      message.innerHTML = `<div class="error">${escapeHtml(error.message)} The resume was finalized successfully.</div>`;
+      button.disabled = false;
+      button.textContent = "Try PDF download again";
+    }
+    finalizeInFlight = false;
+  }
+
+  function normalizeUrl(value) {
+    try {
+      const url = new URL(value);
+      url.hash = "";
+      return url.toString().replace(/\/$/, "");
+    } catch (_error) {
+      return String(value || "").replace(/\/$/, "");
+    }
+  }
+
+  async function recoverExistingDraft(jobUrl) {
+    const recentResponse = await api("/bids/get-recent", {
+      body: { user_id: user._id, limit: 20 },
+    });
+    if (!recentResponse.success || !Array.isArray(recentResponse.data?.result)) {
+      return false;
+    }
+    const existing = recentResponse.data.result.find(
+      (item) => normalizeUrl(item.job_url) === normalizeUrl(jobUrl),
+    );
+    if (!existing?._id) return false;
+
+    const itemResponse = await api("/bids/get-bid-item", {
+      body: { id: existing._id },
+    });
+    if (!itemResponse.success || !itemResponse.data?.result?.bid) return false;
+    showGeneratedDraft(itemResponse.data.result.bid, itemResponse.data.result);
+    return true;
   }
 
   async function handleGenerate(event) {
     event.preventDefault();
+    if (generationInFlight) return;
+    generationInFlight = true;
     const button = event.currentTarget.querySelector("button");
     const message = $("[data-message]");
     const form = new FormData(event.currentTarget);
     job = { url: String(form.get("url")).trim(), content: String(form.get("content")).trim() };
     if (!user.template_url) {
       message.innerHTML = `<div class="error">Please upload a resume template in your Resume Builder profile first.</div>`;
+      generationInFlight = false;
       return;
     }
     button.disabled = true; button.textContent = "Generating draft..."; message.innerHTML = `<p class="hint">This may take a moment. Keep this panel open.</p>`;
     const response = await api("/bids/gen-draft", { body: { user: user._id, job_url: job.url, job_desc: job.content } });
     if (!response.success || !response.data?.bid?._id) {
-      if (response.status === 401) return logout("Your session expired. Please sign in again.");
-      message.innerHTML = `<div class="error">${escapeHtml(errorMessage(response, "Unable to generate the resume draft."))}</div>`;
+      if (response.status === 401) {
+        generationInFlight = false;
+        return logout("Your session expired. Please sign in again.");
+      }
+      const responseMessage = errorMessage(response, "");
+      if (responseMessage.toLowerCase().includes("job url is already existed")) {
+        message.innerHTML = `<p class="hint">This draft was already generated. Loading it now...</p>`;
+        if (await recoverExistingDraft(job.url)) {
+          generationInFlight = false;
+          return;
+        }
+      }
+      const fallback = response.status === 0
+        ? "The Resume Builder API closed the connection. Please try again; the extension now sends only the job description instead of the full Indeed page."
+        : "Unable to generate the resume draft.";
+      message.innerHTML = `<div class="error">${escapeHtml(errorMessage(response, fallback))}</div>`;
       button.disabled = false; button.textContent = "Generate resume draft";
+      generationInFlight = false;
       return;
     }
-    showGeneratedDraft(response.data.result);
+    generationInFlight = false;
+    showGeneratedDraft(response.data.result, response.data.bid);
   }
 
   async function logout(message) {

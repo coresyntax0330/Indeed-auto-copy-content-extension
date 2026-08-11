@@ -13,6 +13,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       });
 
       const text = await response.text();
+
+      console.log(text);
       let data = {};
       try {
         data = text ? JSON.parse(text) : {};
