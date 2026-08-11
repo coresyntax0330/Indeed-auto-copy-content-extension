@@ -1,6 +1,11 @@
 (function () {
   const isIndeed = location.hostname.endsWith("indeed.com");
   const isCvLibrary = location.hostname.includes("cv-library.co");
+  const isReed =
+    location.hostname === "reed.co.uk" ||
+    location.hostname.endsWith(".reed.co.uk");
+  const isReedCom =
+    location.hostname === "reed.com" || location.hostname.endsWith(".reed.com");
   const ADZUNA_DOMAINS = [
     "adzuna.com.au", "adzuna.at", "adzuna.be", "adzuna.com.br",
     "adzuna.ca", "adzuna.fr", "adzuna.de", "adzuna.in", "adzuna.it",
@@ -12,7 +17,8 @@
     (domain) =>
       location.hostname === domain || location.hostname.endsWith(`.${domain}`),
   );
-  if (!isIndeed && !isCvLibrary && !isAdzuna) return;
+  if (!isIndeed && !isCvLibrary && !isAdzuna && !isReed && !isReedCom)
+    return;
   if (document.getElementById("resume-builder-extension")) return;
 
   const API_BASE = "https://api.lovapextech.com/api";
@@ -24,6 +30,14 @@
   ];
 
   function getTargetContainers() {
+    if (isReedCom) {
+      return [".JobBody", '[class~="lg:col-span-2"]'];
+    }
+
+    if (isReed) {
+      return [".job-details_container__lbRfD"];
+    }
+
     if (isAdzuna) {
       return [
         ".ui-adp-content",
