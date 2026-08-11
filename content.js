@@ -1,7 +1,18 @@
 (function () {
   const isIndeed = location.hostname.endsWith("indeed.com");
   const isCvLibrary = location.hostname.includes("cv-library.co");
-  if (!isIndeed && !isCvLibrary) return;
+  const ADZUNA_DOMAINS = [
+    "adzuna.com.au", "adzuna.at", "adzuna.be", "adzuna.com.br",
+    "adzuna.ca", "adzuna.fr", "adzuna.de", "adzuna.in", "adzuna.it",
+    "adzuna.com.mx", "adzuna.nl", "adzuna.co.nz", "adzuna.pl",
+    "adzuna.sg", "adzuna.co.za", "adzuna.es", "adzuna.ch",
+    "adzuna.co.uk", "adzuna.com",
+  ];
+  const isAdzuna = ADZUNA_DOMAINS.some(
+    (domain) =>
+      location.hostname === domain || location.hostname.endsWith(`.${domain}`),
+  );
+  if (!isIndeed && !isCvLibrary && !isAdzuna) return;
   if (document.getElementById("resume-builder-extension")) return;
 
   const API_BASE = "https://api.lovapextech.com/api";
@@ -13,6 +24,14 @@
   ];
 
   function getTargetContainers() {
+    if (isAdzuna) {
+      return [
+        ".ui-adp-content",
+        '[class~="lg:flex"][class~="mb-4"][class~="lg:gap-8"]',
+        ".flex-grow",
+      ];
+    }
+
     if (isCvLibrary) {
       return [".Card_card__ySwWs.JobView_jobCard__j1gZ0"];
     }

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Indeed Content Copier",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Generate tailored Resume Builder drafts from supported job sites",
   "permissions": ["clipboardWrite", "scripting", "storage"],
   "icons": {
@@ -18,7 +18,26 @@
       "matches": [
         "https://*.indeed.com/*",
         "https://*.cv-library.co/*",
-        "https://*.cv-library.co.uk/*"
+        "https://*.cv-library.co.uk/*",
+        "https://*.adzuna.com.au/*",
+        "https://*.adzuna.at/*",
+        "https://*.adzuna.be/*",
+        "https://*.adzuna.com.br/*",
+        "https://*.adzuna.ca/*",
+        "https://*.adzuna.fr/*",
+        "https://*.adzuna.de/*",
+        "https://*.adzuna.in/*",
+        "https://*.adzuna.it/*",
+        "https://*.adzuna.com.mx/*",
+        "https://*.adzuna.nl/*",
+        "https://*.adzuna.co.nz/*",
+        "https://*.adzuna.pl/*",
+        "https://*.adzuna.sg/*",
+        "https://*.adzuna.co.za/*",
+        "https://*.adzuna.es/*",
+        "https://*.adzuna.ch/*",
+        "https://*.adzuna.co.uk/*",
+        "https://*.adzuna.com/*"
       ],
       "js": ["content.js"]
     }
