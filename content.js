@@ -49,10 +49,13 @@
       label { display: block; font-weight: 650; margin: 14px 0 7px; }
       input, textarea { width: 100%; border: 1px solid #cbdde2; border-radius: 8px; padding: 10px 11px; background: white; color: #10212b; font: 14px Inter, Arial, sans-serif; outline: none; }
       input:focus, textarea:focus { border-color: #087b85; box-shadow: 0 0 0 3px #087b851a; }
-      textarea { resize: vertical; min-height: 220px; line-height: 1.4; }
+      textarea { resize: vertical; min-height: 100px; line-height: 1.4; }
       .primary { width: 100%; padding: 11px 14px; margin-top: 18px; color: white; background: #087b85; }
       .secondary { width: 100%; padding: 10px; margin-top: 10px; color: #31515b; background: #e8f3f5; }
       .danger { width: auto; flex: 0 0 auto; padding: 8px 10px; margin: 0; color: #9d3030; background: #fff0f0; }
+      .actions { display: flex; gap: 8px; margin-top: 18px; }
+      .actions .primary { flex: 1; width: auto; margin-top: 0; }
+      .actions .remove-draft { flex: 0 0 auto; padding: 11px 14px; color: #fff; background: #c44747; }
       .row { display: flex; gap: 8px; align-items: flex-start; margin-bottom: 8px; }
       .row input, .row textarea { flex: 1; }
       .row textarea { min-height: 72px; }
@@ -86,6 +89,7 @@
   let verificationToken = "";
   let job = { url: location.href, content: "" };
   let generationInFlight = false;
+  let pendingAutoGenerate = false;
   let memoryToken = "";
 
   function getExtensionStorage() {
@@ -296,11 +300,17 @@
       <button class="primary" type="submit">Generate resume draft</button></form>`;
     $("[data-logout]").onclick = logout;
     $("[data-build]").onsubmit = handleGenerate;
+    if (pendingAutoGenerate && job.url && job.content) {
+      pendingAutoGenerate = false;
+      const form = $("[data-build]");
+      setTimeout(() => form?.requestSubmit(), 0);
+    }
   }
 
   let generatedDraft = null;
   let generatedBid = null;
   let finalizeInFlight = false;
+  let removeInFlight = false;
   let finalizedPdf = null;
 
   function normalizeDraft(rawResult) {
@@ -370,7 +380,7 @@
       <div class="success">Your tailored resume draft is ready. Review and edit it below.</div>
       <h2>Resume Preview &amp; Edit</h2>
       <div data-finalize-message></div>
-      <button class="primary" type="button" data-finalize>Finalize generate &amp; download</button>
+      <div class="actions"><button class="primary" type="button" data-finalize>Finalize generate &amp; download</button><button class="remove-draft" type="button" data-remove-draft>Remove</button></div>
       ${editorInput("Company", "company_name", draft.company_name)}
       ${editorInput("Company title", "role_title", draft.role_title)}
       ${editorInput("Role title", "developer_title", draft.developer_title)}
@@ -379,7 +389,7 @@
       ${roles}
       ${experiences}
       <div class="section"><h2>Skills</h2>${skillGroups || "<p>No skill groups were generated.</p>"}</div>
-      <button class="primary" type="button" data-finalize>Finalize generate &amp; download</button>
+      <div class="actions"><button class="primary" type="button" data-finalize>Finalize generate &amp; download</button><button class="remove-draft" type="button" data-remove-draft>Remove</button></div>
       <button class="primary" type="button" data-copy-draft>Copy edited draft</button>
       <button class="secondary" type="button" data-another>Generate another draft</button>`;
 
@@ -427,6 +437,8 @@
         setTimeout(() => (target.textContent = "Copy edited draft"), 1400);
       } else if (target.matches("[data-finalize]")) {
         await finalizeResume(target);
+      } else if (target.matches("[data-remove-draft]")) {
+        await removeDraft(target);
       } else if (target.matches("[data-another]")) showBuilder();
       else if (target.matches("[data-logout]")) logout();
     };
@@ -483,7 +495,7 @@
   }
 
   async function finalizeResume(button) {
-    if (finalizeInFlight) return;
+    if (finalizeInFlight || removeInFlight) return;
     const message = $("[data-finalize-message]");
     if (finalizedPdf) {
       try {
@@ -553,6 +565,30 @@
       button.textContent = "Try PDF download again";
     }
     finalizeInFlight = false;
+  }
+
+  async function removeDraft(button) {
+    if (removeInFlight || finalizeInFlight || !generatedBid?._id) return;
+    if (!window.confirm("Remove this resume draft from Resume Builder?")) return;
+
+    removeInFlight = true;
+    button.disabled = true;
+    button.textContent = "Removing...";
+    const message = $("[data-finalize-message]");
+    const response = await api("/bids/del-draft", {
+      body: { id: generatedBid._id },
+    });
+
+    if (!response.success || response.data?.status !== "success") {
+      message.innerHTML = `<div class="error">${escapeHtml(errorMessage(response, "Unable to remove the resume draft."))}</div>`;
+      button.disabled = false;
+      button.textContent = "Remove";
+      removeInFlight = false;
+      return;
+    }
+
+    removeInFlight = false;
+    showBuilder(true, "Resume draft removed successfully.");
   }
 
   function normalizeUrl(value) {
@@ -722,6 +758,7 @@
 
   async function openPanel() {
     await expandAndCollect();
+    pendingAutoGenerate = Boolean(job.url && job.content);
     panel.classList.add("open");
     const storedToken = await loadSessionToken();
     if (!storedToken) return showLogin();
