@@ -5,11 +5,25 @@
   const API_BASE = "https://api.lovapextech.com/api";
   const SERVICE_BASE = "https://api.lovapextech.com";
   const TRIGGER_BUTTON = ".js-match-insights-provider-1s05l8k.e19afand0";
-  const TARGET_CONTAINERS = [
+  const FALLBACK_TARGET_CONTAINERS = [
     "#jobDescriptionText",
-    ".serp-page-yl2akf",
     ".css-whzpm2.eu4oa1w0",
   ];
+
+  function getTargetContainers() {
+    if (location.pathname.startsWith("/jobs")) {
+      return [
+        ".jobsearch-RightPane.css-6iabie.eu4oa1w0",
+        ...FALLBACK_TARGET_CONTAINERS,
+      ];
+    }
+
+    if (location.pathname.startsWith("/viewjob")) {
+      return [".css-1butozf.eu4oa1w0", ...FALLBACK_TARGET_CONTAINERS];
+    }
+
+    return FALLBACK_TARGET_CONTAINERS;
+  }
 
   const host = document.createElement("div");
   host.id = "resume-builder-extension";
@@ -72,12 +86,36 @@
   let verificationToken = "";
   let job = { url: location.href, content: "" };
   let generationInFlight = false;
+  let memoryToken = "";
+
+  function getExtensionStorage() {
+    return globalThis.chrome?.storage?.local || null;
+  }
+
+  async function saveSessionToken(value) {
+    memoryToken = value;
+    const storage = getExtensionStorage();
+    if (storage) await storage.set({ resumeBuilderToken: value });
+  }
+
+  async function loadSessionToken() {
+    const storage = getExtensionStorage();
+    if (!storage) return memoryToken;
+    const stored = await storage.get("resumeBuilderToken");
+    return stored.resumeBuilderToken || "";
+  }
+
+  async function clearSessionToken() {
+    memoryToken = "";
+    const storage = getExtensionStorage();
+    if (storage) await storage.remove("resumeBuilderToken");
+  }
 
   function collectText() {
     // Indeed's fallback containers can wrap the whole search page and also
     // contain #jobDescriptionText. Sending all matches duplicates the job and
     // can exceed the API/proxy request limit, which surfaces as ERR_CONNECTION_CLOSED.
-    for (const selector of TARGET_CONTAINERS) {
+    for (const selector of getTargetContainers()) {
       const text = document.querySelector(selector)?.innerText?.trim();
       if (text) return text.slice(0, 60000);
     }
@@ -85,7 +123,13 @@
   }
 
   function errorMessage(response, fallback) {
-    return response?.data?.errors?.map((item) => item.msg).join(" ") || response?.data?.msg || response?.data?.message || response?.error || fallback;
+    return (
+      response?.data?.errors?.map((item) => item.msg).join(" ") ||
+      response?.data?.msg ||
+      response?.data?.message ||
+      response?.error ||
+      fallback
+    );
   }
 
   async function api(path, options = {}) {
@@ -107,7 +151,8 @@
         } catch (_error) {
           data = {
             message:
-              request.responseText || "The service returned an invalid response.",
+              request.responseText ||
+              "The service returned an invalid response.",
           };
         }
         resolve({
@@ -145,7 +190,9 @@
     return job;
   }
 
-  function showLogin(message = "Sign in to generate a tailored resume without leaving Indeed.") {
+  function showLogin(
+    message = "Sign in to generate a tailored resume without leaving Indeed.",
+  ) {
     view.innerHTML = `<h2>Welcome back</h2><p>${message}</p><div data-message></div>
       <form data-login><label>Email</label><input name="email" type="email" autocomplete="email" required placeholder="you@company.com">
       <label>Password</label><input name="password" type="password" autocomplete="current-password" required placeholder="Enter your password">
@@ -163,7 +210,7 @@
 
   async function finishAuthentication(newToken) {
     token = newToken;
-    await chrome.storage.local.set({ resumeBuilderToken: token });
+    await saveSessionToken(token);
     const response = await api("/users/get", { method: "GET" });
     if (!response.success) {
       await logout();
@@ -177,20 +224,27 @@
     event.preventDefault();
     const button = event.currentTarget.querySelector("button");
     const message = $("[data-message]");
-    button.disabled = true; button.textContent = "Signing in..."; message.innerHTML = "";
+    button.disabled = true;
+    button.textContent = "Signing in...";
+    message.innerHTML = "";
     const form = new FormData(event.currentTarget);
-    const response = await api("/users/login", { auth: false, body: { email: form.get("email"), password: form.get("password") } });
+    const response = await api("/users/login", {
+      auth: false,
+      body: { email: form.get("email"), password: form.get("password") },
+    });
     if (response.success && response.data.verificationRequired) {
       verificationToken = response.data.verificationToken;
       showVerification(response.data.email);
       return;
     }
     try {
-      if (!response.success || !response.data.token) throw new Error(errorMessage(response, "Sign in failed."));
+      if (!response.success || !response.data.token)
+        throw new Error(errorMessage(response, "Sign in failed."));
       await finishAuthentication(response.data.token);
     } catch (error) {
       message.innerHTML = `<div class="error">${escapeHtml(error.message)}</div>`;
-      button.disabled = false; button.textContent = "Sign in";
+      button.disabled = false;
+      button.textContent = "Sign in";
     }
   }
 
@@ -198,19 +252,31 @@
     event.preventDefault();
     const button = event.currentTarget.querySelector("button");
     const message = $("[data-message]");
-    button.disabled = true; button.textContent = "Verifying..."; message.innerHTML = "";
-    const response = await api("/users/verify-email", { auth: false, body: { verificationToken, code: new FormData(event.currentTarget).get("code") } });
+    button.disabled = true;
+    button.textContent = "Verifying...";
+    message.innerHTML = "";
+    const response = await api("/users/verify-email", {
+      auth: false,
+      body: {
+        verificationToken,
+        code: new FormData(event.currentTarget).get("code"),
+      },
+    });
     try {
-      if (!response.success || !response.data.token) throw new Error(errorMessage(response, "Verification failed."));
+      if (!response.success || !response.data.token)
+        throw new Error(errorMessage(response, "Verification failed."));
       await finishAuthentication(response.data.token);
     } catch (error) {
       message.innerHTML = `<div class="error">${escapeHtml(error.message)}</div>`;
-      button.disabled = false; button.textContent = "Verify and continue";
+      button.disabled = false;
+      button.textContent = "Verify and continue";
     }
   }
 
   function escapeHtml(value) {
-    const div = document.createElement("div"); div.textContent = value || ""; return div.innerHTML;
+    const div = document.createElement("div");
+    div.textContent = value || "";
+    return div.innerHTML;
   }
 
   function showBuilder(clearJob = false, notice = "") {
@@ -246,10 +312,12 @@
     }
 
     if (!draft || typeof draft !== "object") return null;
-    draft.skills = draft.skills && typeof draft.skills === "object" ? draft.skills : {};
-    draft.experiences = draft.experiences && typeof draft.experiences === "object"
-      ? draft.experiences
-      : {};
+    draft.skills =
+      draft.skills && typeof draft.skills === "object" ? draft.skills : {};
+    draft.experiences =
+      draft.experiences && typeof draft.experiences === "object"
+        ? draft.experiences
+        : {};
     for (let index = 1; index <= 3; index += 1) {
       draft.experiences[`role${index}`] ||= "";
       if (!Array.isArray(draft.experiences[`experience${index}`])) {
@@ -260,26 +328,43 @@
   }
 
   function editorInput(label, field, value, type = "input") {
-    const control = type === "textarea"
-      ? `<textarea data-field="${field}" rows="4">${escapeHtml(value || "")}</textarea>`
-      : `<input data-field="${field}" value="${escapeHtml(value || "")}">`;
+    const control =
+      type === "textarea"
+        ? `<textarea data-field="${field}" rows="4">${escapeHtml(value || "")}</textarea>`
+        : `<input data-field="${field}" value="${escapeHtml(value || "")}">`;
     return `<label>${label}</label>${control}`;
   }
 
   function renderDraftEditor() {
     const draft = generatedDraft;
     const skillGroups = Object.entries(draft.skills)
-      .map(([category, skills]) => `<div class="section" data-skill-group="${escapeHtml(category)}">
+      .map(
+        ([
+          category,
+          skills,
+        ]) => `<div class="section" data-skill-group="${escapeHtml(category)}">
         <div class="section-title"><label>${escapeHtml(category.replaceAll("_", " "))}</label><button class="add" type="button" data-add-skill="${escapeHtml(category)}">+ Add skill</button></div>
         ${(Array.isArray(skills) ? skills : []).map((skill, index) => `<div class="row"><input data-skill-category="${escapeHtml(category)}" data-index="${index}" value="${escapeHtml(skill)}"><button class="danger" type="button" data-remove-skill="${escapeHtml(category)}" data-index="${index}">Remove</button></div>`).join("")}
-      </div>`).join("");
+      </div>`,
+      )
+      .join("");
     const roles = `<div class="section"><h2>Roles</h2>${[1, 2, 3]
-      .map((number) => editorInput(`Role ${number}`, `role${number}`, draft.experiences[`role${number}`]))
+      .map((number) =>
+        editorInput(
+          `Role ${number}`,
+          `role${number}`,
+          draft.experiences[`role${number}`],
+        ),
+      )
       .join("")}</div>`;
-    const experiences = [1, 2, 3].map((number) => `<div class="section">
+    const experiences = [1, 2, 3]
+      .map(
+        (number) => `<div class="section">
       <div class="section-title"><label>Experience ${number}</label><button class="add" type="button" data-add-experience="${number}">+ Add entry</button></div>
       ${draft.experiences[`experience${number}`].map((item, index) => `<div class="row"><textarea data-experience="${number}" data-index="${index}">${escapeHtml(item)}</textarea><button class="danger" type="button" data-remove-experience="${number}" data-index="${index}">Remove</button></div>`).join("")}
-    </div>`).join("");
+    </div>`,
+      )
+      .join("");
 
     view.innerHTML = `<div class="user"><span><strong>${escapeHtml(user.name || user.email)}</strong><br><small>Balance: ${escapeHtml(String(user.balance ?? 0))}</small></span><button class="link" data-logout>Sign out</button></div>
       <div class="success">Your tailored resume draft is ready. Review and edit it below.</div>
@@ -301,25 +386,41 @@
     view.oninput = (event) => {
       const target = event.target;
       if (target.dataset.field) {
-        if (target.dataset.field.startsWith("role") && /^role\d$/.test(target.dataset.field)) {
+        if (
+          target.dataset.field.startsWith("role") &&
+          /^role\d$/.test(target.dataset.field)
+        ) {
           draft.experiences[target.dataset.field] = target.value;
         } else draft[target.dataset.field] = target.value;
       } else if (target.dataset.skillCategory) {
-        draft.skills[target.dataset.skillCategory][Number(target.dataset.index)] = target.value;
+        draft.skills[target.dataset.skillCategory][
+          Number(target.dataset.index)
+        ] = target.value;
       } else if (target.dataset.experience) {
-        draft.experiences[`experience${target.dataset.experience}`][Number(target.dataset.index)] = target.value;
+        draft.experiences[`experience${target.dataset.experience}`][
+          Number(target.dataset.index)
+        ] = target.value;
       }
     };
     view.onclick = async (event) => {
       const target = event.target;
       if (target.dataset.addSkill) {
-        draft.skills[target.dataset.addSkill].push(""); renderDraftEditor();
+        draft.skills[target.dataset.addSkill].push("");
+        renderDraftEditor();
       } else if (target.dataset.removeSkill) {
-        draft.skills[target.dataset.removeSkill].splice(Number(target.dataset.index), 1); renderDraftEditor();
+        draft.skills[target.dataset.removeSkill].splice(
+          Number(target.dataset.index),
+          1,
+        );
+        renderDraftEditor();
       } else if (target.dataset.addExperience) {
-        draft.experiences[`experience${target.dataset.addExperience}`].push(""); renderDraftEditor();
+        draft.experiences[`experience${target.dataset.addExperience}`].push("");
+        renderDraftEditor();
       } else if (target.dataset.removeExperience) {
-        draft.experiences[`experience${target.dataset.removeExperience}`].splice(Number(target.dataset.index), 1); renderDraftEditor();
+        draft.experiences[
+          `experience${target.dataset.removeExperience}`
+        ].splice(Number(target.dataset.index), 1);
+        renderDraftEditor();
       } else if (target.matches("[data-copy-draft]")) {
         await navigator.clipboard.writeText(JSON.stringify(draft, null, 2));
         target.textContent = "Copied!";
@@ -350,7 +451,11 @@
   function downloadPdf(relativePath, filename) {
     return new Promise((resolve, reject) => {
       const request = new XMLHttpRequest();
-      request.open("GET", `${SERVICE_BASE}/job/description/${relativePath}`, true);
+      request.open(
+        "GET",
+        `${SERVICE_BASE}/job/description/${relativePath}`,
+        true,
+      );
       request.responseType = "blob";
       request.timeout = 2 * 60 * 1000;
       request.onload = () => {
@@ -369,8 +474,10 @@
         setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
         resolve();
       };
-      request.onerror = () => reject(new Error("The PDF download connection failed."));
-      request.ontimeout = () => reject(new Error("The PDF download timed out."));
+      request.onerror = () =>
+        reject(new Error("The PDF download connection failed."));
+      request.ontimeout = () =>
+        reject(new Error("The PDF download timed out."));
       request.send();
     });
   }
@@ -404,7 +511,10 @@
     message.innerHTML = `<p class="hint">Creating your document and PDF. This may take a moment.</p>`;
     const response = await api("/bids/gen-resume", {
       body: {
-        company_name: String(generatedDraft.company_name || "").replace(/\.$/, ""),
+        company_name: String(generatedDraft.company_name || "").replace(
+          /\.$/,
+          "",
+        ),
         developer_title: generatedDraft.developer_title || "",
         role_title: generatedDraft.role_title || "",
         salary_range: generatedDraft.salary_range || "",
@@ -433,7 +543,10 @@
       await downloadPdf(finalizedPdf.path, finalizedPdf.filename);
       message.innerHTML = `<div class="success">Resume generated successfully. Your PDF download has started.</div>`;
       user.balance = response.data.balance ?? user.balance;
-      showBuilder(true, "Resume generated successfully. Your PDF download has started.");
+      showBuilder(
+        true,
+        "Resume generated successfully. Your PDF download has started.",
+      );
     } catch (error) {
       message.innerHTML = `<div class="error">${escapeHtml(error.message)} The resume was finalized successfully.</div>`;
       button.disabled = false;
@@ -456,7 +569,10 @@
     const recentResponse = await api("/bids/get-recent", {
       body: { user_id: user._id, limit: 20 },
     });
-    if (!recentResponse.success || !Array.isArray(recentResponse.data?.result)) {
+    if (
+      !recentResponse.success ||
+      !Array.isArray(recentResponse.data?.result)
+    ) {
       return false;
     }
     const existing = recentResponse.data.result.find(
@@ -472,6 +588,61 @@
     return true;
   }
 
+  function wait(milliseconds) {
+    return new Promise((resolve) => setTimeout(resolve, milliseconds));
+  }
+
+  const GENERATION_LOCK_ATTRIBUTE = "data-resume-builder-generation-lock";
+
+  function acquirePageGenerationLock(jobUrl) {
+    const now = Date.now();
+    const existingValue = document.documentElement.getAttribute(
+      GENERATION_LOCK_ATTRIBUTE,
+    );
+    if (existingValue) {
+      try {
+        const existing = JSON.parse(existingValue);
+        const isFresh = now - Number(existing.createdAt) < 10 * 60 * 1000;
+        if (isFresh && normalizeUrl(existing.jobUrl) === normalizeUrl(jobUrl)) {
+          return false;
+        }
+      } catch (_error) {
+        // Replace invalid or stale lock data below.
+      }
+    }
+    document.documentElement.setAttribute(
+      GENERATION_LOCK_ATTRIBUTE,
+      JSON.stringify({ jobUrl, createdAt: now }),
+    );
+    return true;
+  }
+
+  function releasePageGenerationLock(jobUrl) {
+    const existingValue = document.documentElement.getAttribute(
+      GENERATION_LOCK_ATTRIBUTE,
+    );
+    if (!existingValue) return;
+    try {
+      const existing = JSON.parse(existingValue);
+      if (normalizeUrl(existing.jobUrl) !== normalizeUrl(jobUrl)) return;
+    } catch (_error) {
+      // Invalid lock values are safe to remove.
+    }
+    document.documentElement.removeAttribute(GENERATION_LOCK_ATTRIBUTE);
+  }
+
+  async function waitForGeneratedDraft(jobUrl, messageElement) {
+    // A proxy may close the long HTTP response while OpenAI/backend processing
+    // continues. Poll for that same saved bid instead of sending a second job.
+    const maxAttempts = 36;
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      messageElement.innerHTML = `<p class="hint">The server is still generating your resume. Recovering it automatically (${attempt}/${maxAttempts})...</p>`;
+      if (await recoverExistingDraft(jobUrl)) return true;
+      if (attempt < maxAttempts) await wait(5000);
+    }
+    return false;
+  }
+
   async function handleGenerate(event) {
     event.preventDefault();
     if (generationInFlight) return;
@@ -479,53 +650,85 @@
     const button = event.currentTarget.querySelector("button");
     const message = $("[data-message]");
     const form = new FormData(event.currentTarget);
-    job = { url: String(form.get("url")).trim(), content: String(form.get("content")).trim() };
+    job = {
+      url: String(form.get("url")).trim(),
+      content: String(form.get("content")).trim(),
+    };
     if (!user.template_url) {
       message.innerHTML = `<div class="error">Please upload a resume template in your Resume Builder profile first.</div>`;
       generationInFlight = false;
       return;
     }
-    button.disabled = true; button.textContent = "Generating draft..."; message.innerHTML = `<p class="hint">This may take a moment. Keep this panel open.</p>`;
-    const response = await api("/bids/gen-draft", { body: { user: user._id, job_url: job.url, job_desc: job.content } });
+    if (!acquirePageGenerationLock(job.url)) {
+      message.innerHTML = `<div class="error">This job is already being generated in this Indeed page. Please wait for the current request to finish.</div>`;
+      generationInFlight = false;
+      return;
+    }
+    button.disabled = true;
+    button.textContent = "Generating draft...";
+    message.innerHTML = `<p class="hint">This may take a moment. Keep this panel open.</p>`;
+    const response = await api("/bids/gen-draft", {
+      body: { user: user._id, job_url: job.url, job_desc: job.content },
+    });
     if (!response.success || !response.data?.bid?._id) {
       if (response.status === 401) {
+        releasePageGenerationLock(job.url);
         generationInFlight = false;
         return logout("Your session expired. Please sign in again.");
       }
       const responseMessage = errorMessage(response, "");
-      if (responseMessage.toLowerCase().includes("job url is already existed")) {
+      if (response.status === 0) {
+        if (await waitForGeneratedDraft(job.url, message)) {
+          releasePageGenerationLock(job.url);
+          generationInFlight = false;
+          return;
+        }
+        message.innerHTML = `<div class="error">The server did not return the generated draft within 3 minutes. Check your Resume Builder drafts before trying again, because the original request may still complete.</div>`;
+        button.disabled = false;
+        button.textContent = "Generate resume draft";
+        releasePageGenerationLock(job.url);
+        generationInFlight = false;
+        return;
+      }
+      if (
+        responseMessage.toLowerCase().includes("job url is already existed")
+      ) {
         message.innerHTML = `<p class="hint">This draft was already generated. Loading it now...</p>`;
         if (await recoverExistingDraft(job.url)) {
+          releasePageGenerationLock(job.url);
           generationInFlight = false;
           return;
         }
       }
-      const fallback = response.status === 0
-        ? "The Resume Builder API closed the connection. Please try again; the extension now sends only the job description instead of the full Indeed page."
-        : "Unable to generate the resume draft.";
+      const fallback = "Unable to generate the resume draft.";
       message.innerHTML = `<div class="error">${escapeHtml(errorMessage(response, fallback))}</div>`;
-      button.disabled = false; button.textContent = "Generate resume draft";
+      button.disabled = false;
+      button.textContent = "Generate resume draft";
+      releasePageGenerationLock(job.url);
       generationInFlight = false;
       return;
     }
+    releasePageGenerationLock(job.url);
     generationInFlight = false;
     showGeneratedDraft(response.data.result, response.data.bid);
   }
 
   async function logout(message) {
-    token = ""; user = null;
-    await chrome.storage.local.remove("resumeBuilderToken");
+    token = "";
+    user = null;
+    await clearSessionToken();
     showLogin(typeof message === "string" ? message : undefined);
   }
 
   async function openPanel() {
     await expandAndCollect();
     panel.classList.add("open");
-    const stored = await chrome.storage.local.get("resumeBuilderToken");
-    if (!stored.resumeBuilderToken) return showLogin();
-    token = stored.resumeBuilderToken;
+    const storedToken = await loadSessionToken();
+    if (!storedToken) return showLogin();
+    token = storedToken;
     const response = await api("/users/get", { method: "GET" });
-    if (!response.success) return logout("Your saved session expired. Please sign in again.");
+    if (!response.success)
+      return logout("Your saved session expired. Please sign in again.");
     user = response.data;
     showBuilder();
   }
@@ -534,18 +737,28 @@
   $(".close").onclick = () => panel.classList.remove("open");
   $("[data-copy]").onclick = async (event) => {
     const button = event.currentTarget;
-    try { await expandAndCollect(); await navigator.clipboard.writeText(job.content); button.textContent = "Copied!"; }
-    catch (_error) { button.textContent = "Failed"; }
+    try {
+      await expandAndCollect();
+      await navigator.clipboard.writeText(job.content);
+      button.textContent = "Copied!";
+    } catch (_error) {
+      button.textContent = "Failed";
+    }
     setTimeout(() => (button.textContent = "Copy"), 1400);
   };
   $("[data-url]").onclick = async (event) => {
     const button = event.currentTarget;
-    try { await navigator.clipboard.writeText(location.href); button.textContent = "Copied!"; }
-    catch (_error) { button.textContent = "Failed"; }
+    try {
+      await navigator.clipboard.writeText(location.href);
+      button.textContent = "Copied!";
+    } catch (_error) {
+      button.textContent = "Failed";
+    }
     setTimeout(() => (button.textContent = "Copy URL"), 1400);
   };
 
   new MutationObserver(() => {
-    if (!document.documentElement.contains(host)) document.documentElement.appendChild(host);
+    if (!document.documentElement.contains(host))
+      document.documentElement.appendChild(host);
   }).observe(document.documentElement, { childList: true });
 })();
