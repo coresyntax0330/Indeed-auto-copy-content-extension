@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Indeed Content Copier",
-  "version": "1.6.0",
-  "description": "Generate tailored Resume Builder drafts from supported job sites",
+  "version": "1.7.1",
+  "description": "Generate and download tailored resumes from supported job sites",
   "permissions": ["clipboardWrite", "scripting", "storage"],
   "icons": {
     "16": "icons/icon16.png",

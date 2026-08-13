@@ -10,11 +10,25 @@
     location.hostname === "totaljobs.com" ||
     location.hostname.endsWith(".totaljobs.com");
   const ADZUNA_DOMAINS = [
-    "adzuna.com.au", "adzuna.at", "adzuna.be", "adzuna.com.br",
-    "adzuna.ca", "adzuna.fr", "adzuna.de", "adzuna.in", "adzuna.it",
-    "adzuna.com.mx", "adzuna.nl", "adzuna.co.nz", "adzuna.pl",
-    "adzuna.sg", "adzuna.co.za", "adzuna.es", "adzuna.ch",
-    "adzuna.co.uk", "adzuna.com",
+    "adzuna.com.au",
+    "adzuna.at",
+    "adzuna.be",
+    "adzuna.com.br",
+    "adzuna.ca",
+    "adzuna.fr",
+    "adzuna.de",
+    "adzuna.in",
+    "adzuna.it",
+    "adzuna.com.mx",
+    "adzuna.nl",
+    "adzuna.co.nz",
+    "adzuna.pl",
+    "adzuna.sg",
+    "adzuna.co.za",
+    "adzuna.es",
+    "adzuna.ch",
+    "adzuna.co.uk",
+    "adzuna.com",
   ];
   const isAdzuna = ADZUNA_DOMAINS.some(
     (domain) =>
@@ -142,6 +156,7 @@
   let verificationToken = "";
   let job = { url: location.href, content: "" };
   let generationInFlight = false;
+  let panelOpenInFlight = false;
   let pendingAutoGenerate = false;
   let memoryToken = "";
 
@@ -346,11 +361,11 @@
       job.url = location.href;
       job.content = collectText() || job.content;
     }
-    view.innerHTML = `<div class="user"><span><strong>${escapeHtml(user.name || user.email)}</strong><br><small>Balance: ${escapeHtml(String(user.balance ?? 0))}</small></span><button class="link" data-logout>Sign out</button></div>
-      <h2>Build resume</h2><p>${clearJob === true ? "Enter a job URL and description to generate another resume." : "The Indeed job details are ready. Review them, then generate your draft."}</p>${notice ? `<div class="success">${escapeHtml(notice)}</div>` : ""}<div data-message></div>
+    view.innerHTML = `<div class="user"><span><strong>${escapeHtml(user.name || user.email)}</strong><br><small>Balance: ${escapeHtml(String(Number(Number(user.balance).toFixed(3)) ?? 0))}</small></span><button class="link" data-logout>Sign out</button></div>
+      <h2>Build resume</h2><p>${clearJob === true ? "Enter a job URL and description to generate another resume." : "The job details are ready. Review them, then generate and download your resume."}</p>${notice ? `<div class="success">${escapeHtml(notice)}</div>` : ""}<div data-message></div>
       <form data-build><label>Job URL</label><input name="url" type="url" required value="${escapeHtml(job.url)}">
       <label>Job description</label><textarea name="content" required>${escapeHtml(job.content)}</textarea>
-      <button class="primary" type="submit">Generate resume draft</button></form>`;
+      <button class="primary" type="submit">Generate resume</button></form>`;
     $("[data-logout]").onclick = logout;
     $("[data-build]").onsubmit = handleGenerate;
     if (pendingAutoGenerate && job.url && job.content) {
@@ -547,6 +562,47 @@
     });
   }
 
+  async function generateResumeDirectly(rawResult, bid, message, button) {
+    const draft = normalizeDraft(rawResult);
+    if (!draft || !bid?._id) {
+      throw new Error("The generated resume data is invalid or incomplete.");
+    }
+
+    button.disabled = true;
+    button.textContent = "Creating resume PDF...";
+    message.innerHTML = `<p class="hint">The draft is ready. Creating and downloading your PDF now...</p>`;
+    const response = await api("/bids/gen-resume", {
+      body: {
+        company_name: String(draft.company_name || "").replace(/\.$/, ""),
+        developer_title: draft.developer_title || "",
+        role_title: draft.role_title || "",
+        salary_range: draft.salary_range || "",
+        job_type: draft.job_type || "",
+        summary: draft.summary || "",
+        skills: draft.skills || {},
+        experiences: draft.experiences || {},
+        bid,
+        user,
+      },
+    });
+
+    if (!response.success || response.data?.status !== "success") {
+      throw new Error(
+        errorMessage(response, "Unable to generate the resume PDF."),
+      );
+    }
+
+    await downloadPdf(
+      response.data.downloadPDFLink,
+      response.data.pdf_filename,
+    );
+    user.balance = response.data.balance ?? user.balance;
+    showBuilder(
+      true,
+      "Resume generated successfully. Your PDF download has started.",
+    );
+  }
+
   async function finalizeResume(button) {
     if (finalizeInFlight || removeInFlight) return;
     const message = $("[data-finalize-message]");
@@ -622,7 +678,8 @@
 
   async function removeDraft(button) {
     if (removeInFlight || finalizeInFlight || !generatedBid?._id) return;
-    if (!window.confirm("Remove this resume draft from Resume Builder?")) return;
+    if (!window.confirm("Remove this resume draft from Resume Builder?"))
+      return;
 
     removeInFlight = true;
     button.disabled = true;
@@ -654,7 +711,7 @@
     }
   }
 
-  async function recoverExistingDraft(jobUrl) {
+  async function recoverExistingDraft(jobUrl, messageElement, button) {
     const recentResponse = await api("/bids/get-recent", {
       body: { user_id: user._id, limit: 20 },
     });
@@ -673,7 +730,19 @@
       body: { id: existing._id },
     });
     if (!itemResponse.success || !itemResponse.data?.result?.bid) return false;
-    showGeneratedDraft(itemResponse.data.result.bid, itemResponse.data.result);
+    try {
+      await generateResumeDirectly(
+        itemResponse.data.result.bid,
+        itemResponse.data.result,
+        messageElement,
+        button,
+      );
+    } catch (error) {
+      messageElement.innerHTML = `<div class="error">${escapeHtml(error.message)}</div>`;
+      button.disabled = false;
+      button.textContent = "Generate resume";
+      return false;
+    }
     return true;
   }
 
@@ -720,13 +789,14 @@
     document.documentElement.removeAttribute(GENERATION_LOCK_ATTRIBUTE);
   }
 
-  async function waitForGeneratedDraft(jobUrl, messageElement) {
+  async function waitForGeneratedDraft(jobUrl, messageElement, button) {
     // A proxy may close the long HTTP response while OpenAI/backend processing
     // continues. Poll for that same saved bid instead of sending a second job.
     const maxAttempts = 36;
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       messageElement.innerHTML = `<p class="hint">The server is still generating your resume. Recovering it automatically (${attempt}/${maxAttempts})...</p>`;
-      if (await recoverExistingDraft(jobUrl)) return true;
+      if (await recoverExistingDraft(jobUrl, messageElement, button))
+        return true;
       if (attempt < maxAttempts) await wait(5000);
     }
     return false;
@@ -743,8 +813,9 @@
       url: String(form.get("url")).trim(),
       content: String(form.get("content")).trim(),
     };
-    if (!user.template_url) {
-      message.innerHTML = `<div class="error">Please upload a resume template in your Resume Builder profile first.</div>`;
+    const generationJobUrl = job.url;
+    if (!user.template_url || !user.template_coverletter_url) {
+      message.innerHTML = `<div class="error">Please upload both a resume template and a cover letter template in your Resume Builder profile first.</div>`;
       generationInFlight = false;
       return;
     }
@@ -754,28 +825,28 @@
       return;
     }
     button.disabled = true;
-    button.textContent = "Generating draft...";
+    button.textContent = "Generating resume...";
     message.innerHTML = `<p class="hint">This may take a moment. Keep this panel open.</p>`;
     const response = await api("/bids/gen-draft", {
       body: { user: user._id, job_url: job.url, job_desc: job.content },
     });
     if (!response.success || !response.data?.bid?._id) {
       if (response.status === 401) {
-        releasePageGenerationLock(job.url);
+        releasePageGenerationLock(generationJobUrl);
         generationInFlight = false;
         return logout("Your session expired. Please sign in again.");
       }
       const responseMessage = errorMessage(response, "");
       if (response.status === 0) {
-        if (await waitForGeneratedDraft(job.url, message)) {
-          releasePageGenerationLock(job.url);
+        if (await waitForGeneratedDraft(generationJobUrl, message, button)) {
+          releasePageGenerationLock(generationJobUrl);
           generationInFlight = false;
           return;
         }
         message.innerHTML = `<div class="error">The server did not return the generated draft within 3 minutes. Check your Resume Builder drafts before trying again, because the original request may still complete.</div>`;
         button.disabled = false;
-        button.textContent = "Generate resume draft";
-        releasePageGenerationLock(job.url);
+        button.textContent = "Generate resume";
+        releasePageGenerationLock(generationJobUrl);
         generationInFlight = false;
         return;
       }
@@ -783,23 +854,35 @@
         responseMessage.toLowerCase().includes("job url is already existed")
       ) {
         message.innerHTML = `<p class="hint">This draft was already generated. Loading it now...</p>`;
-        if (await recoverExistingDraft(job.url)) {
-          releasePageGenerationLock(job.url);
+        if (await recoverExistingDraft(generationJobUrl, message, button)) {
+          releasePageGenerationLock(generationJobUrl);
           generationInFlight = false;
           return;
         }
       }
-      const fallback = "Unable to generate the resume draft.";
+      const fallback = "Unable to generate the resume.";
       message.innerHTML = `<div class="error">${escapeHtml(errorMessage(response, fallback))}</div>`;
       button.disabled = false;
-      button.textContent = "Generate resume draft";
-      releasePageGenerationLock(job.url);
+      button.textContent = "Generate resume";
+      releasePageGenerationLock(generationJobUrl);
       generationInFlight = false;
       return;
     }
-    releasePageGenerationLock(job.url);
-    generationInFlight = false;
-    showGeneratedDraft(response.data.result, response.data.bid);
+    try {
+      await generateResumeDirectly(
+        response.data.result,
+        response.data.bid,
+        message,
+        button,
+      );
+    } catch (error) {
+      message.innerHTML = `<div class="error">${escapeHtml(error.message)}</div>`;
+      button.disabled = false;
+      button.textContent = "Generate resume";
+    } finally {
+      releasePageGenerationLock(generationJobUrl);
+      generationInFlight = false;
+    }
   }
 
   async function logout(message) {
@@ -810,17 +893,34 @@
   }
 
   async function openPanel() {
-    await expandAndCollect();
-    pendingAutoGenerate = Boolean(job.url && job.content);
-    panel.classList.add("open");
-    const storedToken = await loadSessionToken();
-    if (!storedToken) return showLogin();
-    token = storedToken;
-    const response = await api("/users/get", { method: "GET" });
-    if (!response.success)
-      return logout("Your saved session expired. Please sign in again.");
-    user = response.data;
-    showBuilder();
+    if (panelOpenInFlight || generationInFlight || pendingAutoGenerate) return;
+
+    panelOpenInFlight = true;
+    const sendButton = $("[data-send]");
+    sendButton.disabled = true;
+    try {
+      await expandAndCollect();
+      pendingAutoGenerate = Boolean(job.url && job.content);
+      panel.classList.add("open");
+      const storedToken = await loadSessionToken();
+      if (!storedToken) {
+        pendingAutoGenerate = false;
+        showLogin();
+        return;
+      }
+      token = storedToken;
+      const response = await api("/users/get", { method: "GET" });
+      if (!response.success) {
+        pendingAutoGenerate = false;
+        await logout("Your saved session expired. Please sign in again.");
+        return;
+      }
+      user = response.data;
+      showBuilder();
+    } finally {
+      panelOpenInFlight = false;
+      sendButton.disabled = false;
+    }
   }
 
   $("[data-send]").onclick = openPanel;
