@@ -362,10 +362,10 @@
       job.content = collectText() || job.content;
     }
     view.innerHTML = `<div class="user"><span><strong>${escapeHtml(user.name || user.email)}</strong><br><small>Balance: ${escapeHtml(String(Number(Number(user.balance).toFixed(3)) ?? 0))}</small></span><button class="link" data-logout>Sign out</button></div>
-      <h2>Build resume</h2><p>${clearJob === true ? "Enter a job URL and description to generate another resume." : "The job details are ready. Review them, then generate and download your resume."}</p>${notice ? `<div class="success">${escapeHtml(notice)}</div>` : ""}<div data-message></div>
+      <h2>Build resume</h2><p>${clearJob === true ? "Enter a job URL and description to generate another resume draft." : "Review the captured job details. When both fields are present, the extension will generate an editable resume draft."}</p>${notice ? `<div class="success">${escapeHtml(notice)}</div>` : ""}<div data-message></div>
       <form data-build><label>Job URL</label><input name="url" type="url" required value="${escapeHtml(job.url)}">
       <label>Job description</label><textarea name="content" required>${escapeHtml(job.content)}</textarea>
-      <button class="primary" type="submit">Generate resume</button></form>`;
+      <button class="primary" type="submit">Generate resume draft</button></form>`;
     $("[data-logout]").onclick = logout;
     $("[data-build]").onsubmit = handleGenerate;
     if (pendingAutoGenerate && job.url && job.content) {
@@ -396,13 +396,23 @@
       draft.experiences && typeof draft.experiences === "object"
         ? draft.experiences
         : {};
-    for (let index = 1; index <= 3; index += 1) {
-      draft.experiences[`role${index}`] ||= "";
-      if (!Array.isArray(draft.experiences[`experience${index}`])) {
-        draft.experiences[`experience${index}`] = [];
+    for (const [key, value] of Object.entries(draft.experiences)) {
+      if (/^role\d+$/.test(key) && typeof value !== "string") {
+        draft.experiences[key] = value == null ? "" : String(value);
+      } else if (/^experience\d+$/.test(key) && !Array.isArray(value)) {
+        draft.experiences[key] = value == null || value === "" ? [] : [String(value)];
       }
     }
     return draft;
+  }
+
+  function getExperienceIndexes(experiences) {
+    const indexes = new Set();
+    for (const key of Object.keys(experiences || {})) {
+      const match = key.match(/^(?:role|experience)(\d+)$/);
+      if (match) indexes.add(Number(match[1]));
+    }
+    return [...indexes].sort((left, right) => left - right);
   }
 
   function editorInput(label, field, value, type = "input") {
@@ -415,6 +425,7 @@
 
   function renderDraftEditor() {
     const draft = generatedDraft;
+    const experienceIndexes = getExperienceIndexes(draft.experiences);
     const skillGroups = Object.entries(draft.skills)
       .map(
         ([
@@ -426,7 +437,7 @@
       </div>`,
       )
       .join("");
-    const roles = `<div class="section"><h2>Roles</h2>${[1, 2, 3]
+    const roles = `<div class="section"><h2>Roles</h2>${experienceIndexes
       .map((number) =>
         editorInput(
           `Role ${number}`,
@@ -434,12 +445,12 @@
           draft.experiences[`role${number}`],
         ),
       )
-      .join("")}</div>`;
-    const experiences = [1, 2, 3]
+      .join("") || "<p>No roles were generated.</p>"}</div>`;
+    const experiences = experienceIndexes
       .map(
         (number) => `<div class="section">
       <div class="section-title"><label>Experience ${number}</label><button class="add" type="button" data-add-experience="${number}">+ Add entry</button></div>
-      ${draft.experiences[`experience${number}`].map((item, index) => `<div class="row"><textarea data-experience="${number}" data-index="${index}">${escapeHtml(item)}</textarea><button class="danger" type="button" data-remove-experience="${number}" data-index="${index}">Remove</button></div>`).join("")}
+      ${(draft.experiences[`experience${number}`] || []).map((item, index) => `<div class="row"><textarea data-experience="${number}" data-index="${index}">${escapeHtml(item)}</textarea><button class="danger" type="button" data-remove-experience="${number}" data-index="${index}">Remove</button></div>`).join("")}
     </div>`,
       )
       .join("");
@@ -448,7 +459,7 @@
       <div class="success">Your tailored resume draft is ready. Review and edit it below.</div>
       <h2>Resume Preview &amp; Edit</h2>
       <div data-finalize-message></div>
-      <div class="actions"><button class="primary" type="button" data-finalize>Finalize generate &amp; download</button><button class="remove-draft" type="button" data-remove-draft>Remove</button></div>
+      <div class="actions"><button class="primary" type="button" data-finalize>Finalize Resume</button><button class="remove-draft" type="button" data-remove-draft>Remove</button></div>
       ${editorInput("Company", "company_name", draft.company_name)}
       ${editorInput("Company title", "role_title", draft.role_title)}
       ${editorInput("Role title", "developer_title", draft.developer_title)}
@@ -457,7 +468,7 @@
       ${roles}
       ${experiences}
       <div class="section"><h2>Skills</h2>${skillGroups || "<p>No skill groups were generated.</p>"}</div>
-      <div class="actions"><button class="primary" type="button" data-finalize>Finalize generate &amp; download</button><button class="remove-draft" type="button" data-remove-draft>Remove</button></div>
+      <div class="actions"><button class="primary" type="button" data-finalize>Finalize Resume</button><button class="remove-draft" type="button" data-remove-draft>Remove</button></div>
       <button class="primary" type="button" data-copy-draft>Copy edited draft</button>
       <button class="secondary" type="button" data-another>Generate another draft</button>`;
 
@@ -466,7 +477,7 @@
       if (target.dataset.field) {
         if (
           target.dataset.field.startsWith("role") &&
-          /^role\d$/.test(target.dataset.field)
+          /^role\d+$/.test(target.dataset.field)
         ) {
           draft.experiences[target.dataset.field] = target.value;
         } else draft[target.dataset.field] = target.value;
@@ -562,47 +573,6 @@
     });
   }
 
-  async function generateResumeDirectly(rawResult, bid, message, button) {
-    const draft = normalizeDraft(rawResult);
-    if (!draft || !bid?._id) {
-      throw new Error("The generated resume data is invalid or incomplete.");
-    }
-
-    button.disabled = true;
-    button.textContent = "Creating resume PDF...";
-    message.innerHTML = `<p class="hint">The draft is ready. Creating and downloading your PDF now...</p>`;
-    const response = await api("/bids/gen-resume", {
-      body: {
-        company_name: String(draft.company_name || "").replace(/\.$/, ""),
-        developer_title: draft.developer_title || "",
-        role_title: draft.role_title || "",
-        salary_range: draft.salary_range || "",
-        job_type: draft.job_type || "",
-        summary: draft.summary || "",
-        skills: draft.skills || {},
-        experiences: draft.experiences || {},
-        bid,
-        user,
-      },
-    });
-
-    if (!response.success || response.data?.status !== "success") {
-      throw new Error(
-        errorMessage(response, "Unable to generate the resume PDF."),
-      );
-    }
-
-    await downloadPdf(
-      response.data.downloadPDFLink,
-      response.data.pdf_filename,
-    );
-    user.balance = response.data.balance ?? user.balance;
-    showBuilder(
-      true,
-      "Resume generated successfully. Your PDF download has started.",
-    );
-  }
-
   async function finalizeResume(button) {
     if (finalizeInFlight || removeInFlight) return;
     const message = $("[data-finalize-message]");
@@ -651,7 +621,7 @@
     if (!response.success || response.data?.status !== "success") {
       message.innerHTML = `<div class="error">${escapeHtml(errorMessage(response, "Unable to finalize the resume."))}</div>`;
       button.disabled = false;
-      button.textContent = "Finalize generate & download";
+      button.textContent = "Finalize Resume";
       finalizeInFlight = false;
       return;
     }
@@ -730,19 +700,9 @@
       body: { id: existing._id },
     });
     if (!itemResponse.success || !itemResponse.data?.result?.bid) return false;
-    try {
-      await generateResumeDirectly(
-        itemResponse.data.result.bid,
-        itemResponse.data.result,
-        messageElement,
-        button,
-      );
-    } catch (error) {
-      messageElement.innerHTML = `<div class="error">${escapeHtml(error.message)}</div>`;
-      button.disabled = false;
-      button.textContent = "Generate resume";
-      return false;
-    }
+    const draft = normalizeDraft(itemResponse.data.result.bid);
+    if (!draft) return false;
+    showGeneratedDraft(draft, itemResponse.data.result);
     return true;
   }
 
@@ -825,8 +785,8 @@
       return;
     }
     button.disabled = true;
-    button.textContent = "Generating resume...";
-    message.innerHTML = `<p class="hint">This may take a moment. Keep this panel open.</p>`;
+    button.textContent = "Generating draft...";
+    message.innerHTML = `<p class="hint">Creating your tailored draft. Keep this panel open.</p>`;
     const response = await api("/bids/gen-draft", {
       body: { user: user._id, job_url: job.url, job_desc: job.content },
     });
@@ -845,7 +805,7 @@
         }
         message.innerHTML = `<div class="error">The server did not return the generated draft within 3 minutes. Check your Resume Builder drafts before trying again, because the original request may still complete.</div>`;
         button.disabled = false;
-        button.textContent = "Generate resume";
+        button.textContent = "Generate resume draft";
         releasePageGenerationLock(generationJobUrl);
         generationInFlight = false;
         return;
@@ -863,26 +823,14 @@
       const fallback = "Unable to generate the resume.";
       message.innerHTML = `<div class="error">${escapeHtml(errorMessage(response, fallback))}</div>`;
       button.disabled = false;
-      button.textContent = "Generate resume";
+      button.textContent = "Generate resume draft";
       releasePageGenerationLock(generationJobUrl);
       generationInFlight = false;
       return;
     }
-    try {
-      await generateResumeDirectly(
-        response.data.result,
-        response.data.bid,
-        message,
-        button,
-      );
-    } catch (error) {
-      message.innerHTML = `<div class="error">${escapeHtml(error.message)}</div>`;
-      button.disabled = false;
-      button.textContent = "Generate resume";
-    } finally {
-      releasePageGenerationLock(generationJobUrl);
-      generationInFlight = false;
-    }
+    showGeneratedDraft(response.data.result, response.data.bid);
+    releasePageGenerationLock(generationJobUrl);
+    generationInFlight = false;
   }
 
   async function logout(message) {
