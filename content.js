@@ -143,8 +143,8 @@
     <div class="launcher">
       <button class="mini" data-copy>Copy</button><button class="mini" data-url>Copy URL</button><button class="mini send" data-send>Send</button>
     </div>
-    <aside class="panel" aria-label="Resume Builder">
-      <header class="head"><div class="brand">Resume Builder<small>Job assistant</small></div><button class="close" aria-label="Close">&times;</button></header>
+    <aside class="panel" aria-label="LovapexTech JobBid">
+      <header class="head"><div class="brand">LovapexTech JobBid<small>Resume assistant</small></div><button class="close" aria-label="Close">&times;</button></header>
       <main class="body"><div class="card"><div data-view></div></div></main>
     </aside>`;
 
@@ -263,7 +263,7 @@
   }
 
   function showLogin(
-    message = "Sign in to generate a tailored resume without leaving Indeed.",
+    message = "Sign in to generate a tailored resume without leaving the job page.",
   ) {
     view.innerHTML = `<h2>Welcome back</h2><p>${message}</p><div data-message></div>
       <form data-login><label>Email</label><input name="email" type="email" autocomplete="email" required placeholder="you@company.com">
@@ -780,7 +780,7 @@
       return;
     }
     if (!acquirePageGenerationLock(job.url)) {
-      message.innerHTML = `<div class="error">This job is already being generated in this Indeed page. Please wait for the current request to finish.</div>`;
+      message.innerHTML = `<div class="error">This job is already being generated on this page. Please wait for the current request to finish.</div>`;
       generationInFlight = false;
       return;
     }

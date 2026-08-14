@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Indeed Content Copier",
-  "version": "1.7.3",
-  "description": "Generate and download tailored resumes from supported job sites",
+  "name": "LovapexTech JobBid",
+  "version": "1.7.4",
+  "description": "Create, edit, finalize, and download tailored resumes from supported job sites",
   "permissions": ["clipboardWrite", "scripting", "storage"],
   "icons": {
     "16": "icons/icon16.png",
