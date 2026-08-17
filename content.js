@@ -122,7 +122,6 @@
       .danger { width: auto; flex: 0 0 auto; padding: 8px 10px; margin: 0; color: #9d3030; background: #fff0f0; }
       .actions { display: flex; gap: 8px; margin-top: 18px; }
       .actions .primary { flex: 1; width: auto; margin-top: 0; }
-      .actions .remove-draft { flex: 0 0 auto; padding: 11px 14px; color: #fff; background: #c44747; }
       .row { display: flex; gap: 8px; align-items: flex-start; margin-bottom: 8px; }
       .row input, .row textarea { flex: 1; }
       .row textarea { min-height: 72px; }
@@ -378,7 +377,6 @@
   let generatedDraft = null;
   let generatedBid = null;
   let finalizeInFlight = false;
-  let removeInFlight = false;
   let finalizedPdf = null;
 
   function normalizeDraft(rawResult) {
@@ -459,7 +457,7 @@
       <div class="success">Your tailored resume draft is ready. Review and edit it below.</div>
       <h2>Resume Preview &amp; Edit</h2>
       <div data-finalize-message></div>
-      <div class="actions"><button class="primary" type="button" data-finalize>Finalize Resume</button><button class="remove-draft" type="button" data-remove-draft>Remove</button></div>
+      <div class="actions"><button class="primary" type="button" data-finalize>Finalize Resume</button></div>
       ${editorInput("Company", "company_name", draft.company_name)}
       ${editorInput("Company title", "role_title", draft.role_title)}
       ${editorInput("Role title", "developer_title", draft.developer_title)}
@@ -468,7 +466,7 @@
       ${roles}
       ${experiences}
       <div class="section"><h2>Skills</h2>${skillGroups || "<p>No skill groups were generated.</p>"}</div>
-      <div class="actions"><button class="primary" type="button" data-finalize>Finalize Resume</button><button class="remove-draft" type="button" data-remove-draft>Remove</button></div>
+      <div class="actions"><button class="primary" type="button" data-finalize>Finalize Resume</button></div>
       <button class="primary" type="button" data-copy-draft>Copy edited draft</button>
       <button class="secondary" type="button" data-another>Generate another draft</button>`;
 
@@ -516,8 +514,6 @@
         setTimeout(() => (target.textContent = "Copy edited draft"), 1400);
       } else if (target.matches("[data-finalize]")) {
         await finalizeResume(target);
-      } else if (target.matches("[data-remove-draft]")) {
-        await removeDraft(target);
       } else if (target.matches("[data-another]")) showBuilder();
       else if (target.matches("[data-logout]")) logout();
     };
@@ -574,7 +570,7 @@
   }
 
   async function finalizeResume(button) {
-    if (finalizeInFlight || removeInFlight) return;
+    if (finalizeInFlight) return;
     const message = $("[data-finalize-message]");
     if (finalizedPdf) {
       try {
@@ -591,8 +587,8 @@
       }
       return;
     }
-    if (!generatedBid?._id) {
-      message.innerHTML = `<div class="error">The generated job record is missing. Please generate the draft again.</div>`;
+    if (!generatedBid?.job_url || !generatedBid?.job_desc) {
+      message.innerHTML = `<div class="error">The generated job data is incomplete. Please generate the draft again.</div>`;
       return;
     }
 
@@ -644,31 +640,6 @@
       button.textContent = "Try PDF download again";
     }
     finalizeInFlight = false;
-  }
-
-  async function removeDraft(button) {
-    if (removeInFlight || finalizeInFlight || !generatedBid?._id) return;
-    if (!window.confirm("Remove this resume draft from Resume Builder?"))
-      return;
-
-    removeInFlight = true;
-    button.disabled = true;
-    button.textContent = "Removing...";
-    const message = $("[data-finalize-message]");
-    const response = await api("/bids/del-draft", {
-      body: { id: generatedBid._id },
-    });
-
-    if (!response.success || response.data?.status !== "success") {
-      message.innerHTML = `<div class="error">${escapeHtml(errorMessage(response, "Unable to remove the resume draft."))}</div>`;
-      button.disabled = false;
-      button.textContent = "Remove";
-      removeInFlight = false;
-      return;
-    }
-
-    removeInFlight = false;
-    showBuilder(true, "Resume draft removed successfully.");
   }
 
   function normalizeUrl(value) {
@@ -790,7 +761,12 @@
     const response = await api("/bids/gen-draft", {
       body: { user: user._id, job_url: job.url, job_desc: job.content },
     });
-    if (!response.success || !response.data?.bid?._id) {
+    if (
+      !response.success ||
+      !response.data?.bid?.job_url ||
+      !response.data?.bid?.job_desc ||
+      !response.data?.result
+    ) {
       if (response.status === 401) {
         releasePageGenerationLock(generationJobUrl);
         generationInFlight = false;
